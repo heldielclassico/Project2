@@ -1,6 +1,7 @@
 import sys
+import os
 
-# --- PATCH UNTUK PYTHON 3.12+ ---
+# --- PATCH UNTUK PYTHON 3.12+ (LooseVersion Error) ---
 try:
     from distutils.version import LooseVersion
 except ImportError:
@@ -8,7 +9,6 @@ except ImportError:
     import distutils
     import distutils.version
     distutils.version.LooseVersion = LooseVersion
-# --------------------------------
 
 import undetected_chromedriver as uc
 from selenium.webdriver.common.by import By
@@ -19,92 +19,78 @@ import pandas as pd
 import time
 import re
 
-def scrape_shopee_to_excel(keyword, limit_produk=20):
-    # Konfigurasi Browser
+def scrape_shopee(keyword, limit=15):
     options = uc.ChromeOptions()
-    # options.add_argument('--headless') # Aktifkan jika tidak ingin melihat jendela browser
     
-    driver = uc.Chrome(options=options)
+    # --- PENGATURAN AGAR TIDAK ERROR DI LINUX/SERVER ---
+    if sys.platform == "linux" or sys.platform == "linux2":
+        options.add_argument('--headless') # Jalankan tanpa jendela (wajib di server)
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        # Jika Chrome terinstal di lokasi standar Linux
+        if os.path.exists("/usr/bin/google-chrome"):
+            options.binary_location = "/usr/bin/google-chrome"
     
+    # Jika di Windows dan Chrome tidak ketemu, aktifkan baris di bawah ini:
+    # options.binary_location = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
+
     try:
-        print(f"Membuka Shopee untuk mencari: {keyword}...")
+        driver = uc.Chrome(options=options)
+        print(f"Mencari produk: {keyword}...")
+        
         driver.get("https://shopee.co.id/")
+        wait = WebDriverWait(driver, 20)
         
-        # Menunggu halaman utama terbuka (max 10 detik)
-        wait = WebDriverWait(driver, 10)
+        # Cari kotak input
+        search_input = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input.shopee-searchbar-input__input")))
+        search_input.send_keys(keyword)
+        search_input.send_keys(Keys.ENTER)
         
-        # Cari kotak pencarian
-        search_bar = wait.until(EC.presence_of_element_located((By.CSS_SELECTOR, "input.shopee-searchbar-input__input")))
-        search_bar.send_keys(keyword)
-        search_bar.send_keys(Keys.ENTER)
+        time.sleep(10) # Waktu tunggu untuk loading & bypass bot detection
         
-        print("Menunggu hasil pencarian... (Selesaikan captcha jika muncul)")
-        time.sleep(7) # Waktu untuk loading produk & scroll manual jika ada captcha
-
-        # Scroll perlahan agar produk termuat (Lazy Load)
-        driver.execute_script("window.scrollBy(0, 1000);")
-        time.sleep(2)
+        # Scroll otomatis agar item muncul
         driver.execute_script("window.scrollBy(0, 1000);")
         time.sleep(2)
 
-        # Ambil semua container produk
         items = driver.find_elements(By.CSS_SELECTOR, "div.col-xs-2-4")
-        
-        hasil_data = []
-        
-        for item in items[:limit_produk]:
+        data_list = []
+
+        for item in items[:limit]:
             try:
-                # Ambil Nama
                 nama = item.find_element(By.CSS_SELECTOR, "div[data-sqe='name']").text
-                
-                # Ambil Harga (Shopee sering pakai class dinamis, kita pakai selector yang umum)
                 harga_raw = item.find_element(By.CSS_SELECTOR, "span[class*='ze48_m']").text
                 
-                # Bersihkan harga (Hapus 'Rp' dan titik)
+                # Pembersihan harga ke angka
                 harga_angka = int(re.sub(r'\D', '', harga_raw))
+                link = item.find_element(By.TAG_NAME, "a").get_attribute("href")
                 
-                # Ambil Link Produk
-                link_produk = item.find_element(By.TAG_NAME, "a").get_attribute("href")
-                
-                hasil_data.append({
-                    "Nama Produk": nama,
+                data_list.append({
+                    "Nama": nama,
                     "Harga (Rp)": harga_angka,
-                    "Link": link_produk
+                    "Link": link
                 })
-            except Exception:
+            except:
                 continue
 
-        # Proses dengan Pandas
-        if hasil_data:
-            df = pd.DataFrame(hasil_data)
-            
-            # Urutkan dari yang termurah
-            df_sorted = df.sort_values(by="Harga (Rp)", ascending=True)
+        if data_list:
+            df = pd.DataFrame(data_list)
+            df = df.sort_values(by="Harga (Rp)", ascending=True) # Urutkan termurah
             
             # Simpan ke Excel
-            filename = f"promo_{keyword.replace(' ', '_')}.xlsx"
-            df_sorted.to_excel(filename, index=False)
+            filename = f"hasil_{keyword.replace(' ', '_')}.xlsx"
+            df.to_excel(filename, index=False)
             
-            print("-" * 30)
-            print(f"BERHASIL!")
-            print(f"Total produk ditemukan: {len(df_sorted)}")
-            print(f"File tersimpan sebagai: {filename}")
-            print("-" * 30)
-            print("5 Produk Termurah:")
-            print(df_sorted.head(5))
+            print(f"\nSelesai! {len(df)} produk disimpan ke {filename}")
+            print(df.head())
         else:
-            print("Gagal mengambil data. Coba cek apakah ada Captcha di layar browser.")
+            print("Gagal mengambil data. Cek apakah ada Captcha di browser.")
 
     except Exception as e:
-        print(f"Terjadi kesalahan: {e}")
-        
+        print(f"Error terjadi: {e}")
     finally:
-        print("\nMenutup browser dalam 5 detik...")
-        time.sleep(5)
-        driver.quit()
+        if 'driver' in locals():
+            driver.quit()
 
-# --- JALANKAN PROGRAM ---
 if __name__ == "__main__":
-    # Ganti keyword sesuai keinginanmu
-    cari_barang = "SSD NVME 512GB" 
-    scrape_shopee_to_excel(cari_barang)
+    kata_kunci = "Mouse Logitech"
+    scrape_shopee(kata_kunci)
